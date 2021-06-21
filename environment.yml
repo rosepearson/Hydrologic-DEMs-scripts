@@ -21,4 +21,4 @@ dependencies:
   - matplotlib
   - laspy
 
-prefix: C:\ProgramData\Anaconda3\envs\lidar2
+prefix: C:\ProgramData\Anaconda3\envs\lidar
