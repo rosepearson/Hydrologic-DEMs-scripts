@@ -685,13 +685,22 @@ def main_dask():
 
 
 def main_compare():
+    """ A class to compare the results and timings for three different IDW implementations:
+     * PDAL writers.gdal
+     * Scipy KDTree
+     * Sklearn KDTree
+     Timings are taken from 10 runs 
+
+     Timings runs have shown the Scipy to out perform the SKLearn implementation. """
+     
+    verbose = False
 
     # parameters
     h_crs = 2193
     v_crs = 7839
     res = 10
     leafsize = 10
-    eps = .1  # approximate nearest, dist <= (1 + eps) * true nearest
+    eps = 0  # approximate nearest, dist <= (1 + eps) * true nearest
     power = 2
     window_size = 0
     radius = numpy.sqrt(2)*res
@@ -707,6 +716,8 @@ def main_compare():
     time_gdal=[]
     time_scipy=[]
     time_sklearn=[]
+    time_scipy_f=[]
+    time_sklearn_f=[]
 
     # setup intial evaluation grid
     grid_x, grid_y = numpy.meshgrid(numpy.arange(xy_in[:, 0].min(), xy_in[:, 0].max(), res),
@@ -735,6 +746,7 @@ def main_compare():
                                 axis=0).transpose()
 
     for i in range(iterations):
+        print(f"Iteration {i}")
         # PDAL/GDAL IDW
         start_time = time.time()
         pdal_pipeline_instructions = [
@@ -743,72 +755,82 @@ def main_compare():
              "filename": r"C:\Users\pearsonra\Documents\data\test_parallel\cache\Wellington_2013\test.tif",
              "window_size": window_size, "power": power, "radius": radius,
              "origin_x":  float(idw_gdal.x.min())-res/2, "origin_y": float(idw_gdal.y.min())-res/2,
-             "width": len(idw_gdal.x), "height": len(idw_gdal.y)}]
+             "width": len(idw_gdal.x)*100, "height": len(idw_gdal.y)*100}]  # to simulate the much larger area currently being used
         pdal_pipeline = pdal.Pipeline(json.dumps(pdal_pipeline_instructions), [all_points])
         pdal_pipeline.execute()
-        with rioxarray.rioxarray.open_rasterio(r"C:\Users\pearsonra\Documents\data\test_parallel\cache\Wellington_2013\test.tif", masked=True) as idw_gdal:
-            idw_gdal.load()
-        idw_gdal = idw_gdal.copy(deep=True)  # Deep copy is required to ensure the opened file is properly unlocked
-        idw_gdal.rio.set_crs(h_crs)
+        with rioxarray.rioxarray.open_rasterio(r"C:\Users\pearsonra\Documents\data\test_parallel\cache\Wellington_2013\test.tif", masked=True) as idw_gdal_big:
+            idw_gdal_big.load()
+        idw_gdal_big = idw_gdal_big.copy(deep=True)  # Deep copy is required to ensure the opened file is properly unlocked
+        idw_gdal_big.rio.set_crs(h_crs)
         end_time = time.time()
         time_gdal.append(end_time-start_time)
-        print(f"GDAL IDW takes {end_time-start_time}")
+        if(verbose):
+            print(f"GDAL IDW takes {end_time-start_time}")
 
         # Python IDW scipy - class
         start_time = time.time()
         idw_tree = InvDistTreeFuncSciPy(xy_in, z_in, leafsize=leafsize)
-        z_out_flat = idw_tree(grid_xy, search_radius=radius, power=power)  #, eps=eps)
+        z_out_flat = idw_tree(grid_xy, search_radius=radius, power=power, eps=eps)
         z_out = z_out_flat.reshape(grid_x.shape)
         end_time = time.time()
         time_scipy.append(end_time-start_time)
-        print(f"IDW scipy class takes {end_time-start_time}")
+        if(verbose):
+            print(f"IDW scipy class takes {end_time-start_time}")
         idw_scipy_class = idw_gdal.copy(deep=True)
         idw_scipy_class.data[0] = z_out.reshape(grid_x.shape)
-    
+
         # Python IDW scipy - function
         start_time = time.time()
-        z_out_flat = idw_function_scipy(xy_in, z_in, grid_xy, leafsize=leafsize, search_radius=radius, power=power)  #, eps=eps)
+        z_out_flat = idw_function_scipy(xy_in, z_in, grid_xy, leafsize=leafsize, search_radius=radius, power=power, eps=eps)
         z_out = z_out_flat.reshape(grid_x.shape)
-        print(f"IDW scipy function takes {time.time()-start_time}")
+        end_time = time.time()
+        time_scipy_f.append(end_time-start_time)
+        if(verbose):
+            print(f"IDW scipy function takes {end_time-start_time}")
         idw_scipy_function = idw_gdal.copy(deep=True)
         idw_scipy_function.data[0] = z_out.reshape(grid_x.shape)
-    
+
         # Python IDW skikit-learn - class
         start_time = time.time()
         idw_tree = InvDistTreeFuncLearn(xy_in, z_in, leafsize=leafsize)
-        z_out_flat = idw_tree(grid_xy, search_radius=radius, power=power)  #, eps=eps)
+        z_out_flat = idw_tree(grid_xy, search_radius=radius, power=power)
         z_out = z_out_flat.reshape(grid_x.shape)
         end_time = time.time()
         time_sklearn.append(end_time-start_time)
-        print(f"IDW sklearn class takes {end_time-start_time}")
+        if(verbose):
+            print(f"IDW sklearn class takes {end_time-start_time}")
         idw_learn_class = idw_gdal.copy(deep=True)
         idw_learn_class.data[0] = z_out.reshape(grid_x.shape)
-    
+
         # Python IDW skikit-learn - function
         start_time = time.time()
-        z_out_flat = idw_function_learn(xy_in, z_in, grid_xy, search_radius=radius, power=power, leafsize=leafsize)  #, eps=eps)
+        z_out_flat = idw_function_learn(xy_in, z_in, grid_xy, search_radius=radius, power=power, leafsize=leafsize)
         z_out = z_out_flat.reshape(grid_x.shape)
         end_time = time.time()
-        print(f"IDW sklearn function takes {time.time()-start_time}")
+        time_sklearn_f.append(end_time-start_time)
+        if(verbose):
+            print(f"IDW sklearn function takes {end_time-start_time}")
         idw_learn_function = idw_gdal.copy(deep=True)
         idw_learn_function.data[0] = z_out.reshape(grid_x.shape)
-    
-    
+
         idw_diff_gdal = idw_gdal.copy(deep=True)
         idw_diff_gdal.data = idw_gdal.data - idw_scipy_function.data
-        
+
         idw_diff_python = idw_gdal.copy(deep=True)
         idw_diff_python.data = idw_learn_function.data - idw_scipy_function.data
-    
-        print(f"Difference scipy function to class: {numpy.abs(idw_scipy_class.data - idw_scipy_function.data)[numpy.isnan(idw_scipy_class.data - idw_scipy_function.data)== False].max().max()}")
-        print(f"Difference sklearn function to class: {numpy.abs(idw_learn_class.data - idw_learn_function.data)[numpy.isnan(idw_learn_class.data - idw_learn_function.data)== False].max().max()}")
-    
-        print(f"The max between the PDAL writers.gdal and scipy implementation is {numpy.abs(idw_diff_gdal.data[0])[numpy.isnan(idw_diff_gdal.data[0])==False].max().max()}")
-        print(f"The max between the Python KDTree implementations is {numpy.abs(idw_diff_python.data[0])[numpy.isnan(idw_diff_python.data[0])==False].max().max()}")
 
+        if(verbose or i == 0): # print first iteration as does not change
+            print(f"Difference scipy function to class: {numpy.abs(idw_scipy_class.data - idw_scipy_function.data)[numpy.isnan(idw_scipy_class.data - idw_scipy_function.data)== False].max().max()}")
+            print(f"Difference sklearn function to class: {numpy.abs(idw_learn_class.data - idw_learn_function.data)[numpy.isnan(idw_learn_class.data - idw_learn_function.data)== False].max().max()}")
+            print(f"The max between the PDAL writers.gdal and scipy implementation is {numpy.abs(idw_diff_gdal.data[0])[numpy.isnan(idw_diff_gdal.data[0])==False].max().max()}")
+            print(f"The max between the Python KDTree implementations is {numpy.abs(idw_diff_python.data[0])[numpy.isnan(idw_diff_python.data[0])==False].max().max()}")
+
+    print(f"Leaf size is: {leafsize}, and esp (for scipy is): {eps}")
     print(f"Mean GDAL and std time: {numpy.mean(time_gdal)} and {numpy.std(time_gdal)}")
-    print(f"Mean GDAL and std time: {numpy.mean(time_scipy)} and {numpy.std(time_scipy)}")
-    print(f"Mean GDAL and std time: {numpy.mean(time_sklearn)} and {numpy.std(time_sklearn)}")
+    print(f"Mean SciPy and std time: {numpy.mean(time_scipy)} and {numpy.std(time_scipy)}")
+    print(f"Mean SciKit-Learn and std time: {numpy.mean(time_sklearn)} and {numpy.std(time_sklearn)}")
+    print(f"Mean SciPy and std time functions: {numpy.mean(time_scipy_f)} and {numpy.std(time_scipy_f)}")
+    print(f"Mean SciKit-Learn and std time functions: {numpy.mean(time_sklearn_f)} and {numpy.std(time_sklearn_f)}")
 
 
 if __name__ == "__main__":
