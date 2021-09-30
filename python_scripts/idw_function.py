@@ -833,5 +833,101 @@ def main_compare():
     print(f"Mean SciKit-Learn and std time functions: {numpy.mean(time_sklearn_f)} and {numpy.std(time_sklearn_f)}")
 
 
+def main_scipy_vs_gdal():
+    """ A class to compare the results and timings for three different IDW implementations:
+     * PDAL writers.gdal
+     * Scipy KDTree
+     Plot the result
+
+     Timings runs have shown the Scipy to out perform the SKLearn implementation. """
+     
+    verbose = True
+
+    # parameters
+    h_crs = 2193
+    v_crs = 7839
+    res = 10
+    leafsize = 10
+    eps = 0  # approximate nearest, dist <= (1 + eps) * true nearest
+    power = 2
+    window_size = 0
+    radius = numpy.sqrt(2)*res
+
+    # read in lidar
+    all_points = setup_pdal(h_crs, v_crs)
+    xy_in = numpy.empty((len(all_points), 2))
+    xy_in[:, 0] = all_points['X']
+    xy_in[:, 1] = all_points['Y']
+    z_in = all_points['Z']
+
+    # setup intial evaluation grid
+    grid_x, grid_y = numpy.meshgrid(numpy.arange(xy_in[:, 0].min(), xy_in[:, 0].max(), res),
+                                    numpy.arange(xy_in[:, 1].min(), xy_in[:, 1].max(), res))
+
+    # PDAL/GDAL IDW
+    start_time = time.time()
+    pdal_pipeline_instructions = [
+        {"type":  "writers.gdal", "resolution": res,
+         "gdalopts": f"a_srs=EPSG:{h_crs}+{v_crs}", "output_type": ["idw"],
+         "filename": r"C:\Users\pearsonra\Documents\data\test_parallel\cache\Wellington_2013\test.tif",
+         "window_size": window_size, "power": power, "radius": radius,
+         "origin_x":  all_points['X'].min(), "origin_y": all_points['Y'].min(),
+         "width": grid_x.shape[0], "height": grid_x.shape[1]}]
+    pdal_pipeline = pdal.Pipeline(json.dumps(pdal_pipeline_instructions), [all_points])
+    pdal_pipeline.execute()
+    with rioxarray.rioxarray.open_rasterio(r"C:\Users\pearsonra\Documents\data\test_parallel\cache\Wellington_2013\test.tif", masked=True) as idw_gdal:
+        idw_gdal.load()
+    idw_gdal = idw_gdal.copy(deep=True)  # Deep copy is required to ensure the opened file is properly unlocked
+    idw_gdal.rio.set_crs(h_crs)
+    print(f"GDAL IDW takes {time.time()-start_time}")
+
+    # setup evaluation grid
+    grid_x, grid_y = numpy.meshgrid(idw_gdal.x, idw_gdal.y)
+    grid_xy = numpy.concatenate((grid_x.flatten().reshape((1, -1)), grid_y.flatten().reshape((1, -1))),
+                                axis=0).transpose()
+
+    # PDAL/GDAL IDW
+    start_time = time.time()
+    pdal_pipeline_instructions = [
+        {"type":  "writers.gdal", "resolution": res,
+         "gdalopts": f"a_srs=EPSG:{h_crs}+{v_crs}", "output_type": ["idw"],
+         "filename": r"C:\Users\pearsonra\Documents\data\test_parallel\cache\Wellington_2013\test.tif",
+         "window_size": window_size, "power": power, "radius": radius,
+         "origin_x":  float(idw_gdal.x.min())-res/2, "origin_y": float(idw_gdal.y.min())-res/2,
+         "width": len(idw_gdal.x)*100, "height": len(idw_gdal.y)*100}]  # to simulate the much larger area currently being used
+    pdal_pipeline = pdal.Pipeline(json.dumps(pdal_pipeline_instructions), [all_points])
+    pdal_pipeline.execute()
+    with rioxarray.rioxarray.open_rasterio(r"C:\Users\pearsonra\Documents\data\test_parallel\cache\Wellington_2013\test.tif", masked=True) as idw_gdal_big:
+        idw_gdal_big.load()
+    idw_gdal_big = idw_gdal_big.copy(deep=True)  # Deep copy is required to ensure the opened file is properly unlocked
+    idw_gdal_big.rio.set_crs(h_crs)
+    end_time = time.time()
+    if(verbose):
+        print(f"GDAL IDW takes {end_time-start_time}")
+
+    # Python IDW scipy - function
+    start_time = time.time()
+    z_out_flat = idw_function_scipy(xy_in, z_in, grid_xy, leafsize=leafsize, search_radius=radius, power=power, eps=eps)
+    z_out = z_out_flat.reshape(grid_x.shape)
+    end_time = time.time()
+    if(verbose):
+        print(f"IDW scipy function takes {end_time-start_time}")
+    idw_scipy_function = idw_gdal.copy(deep=True)
+    idw_scipy_function.data[0] = z_out.reshape(grid_x.shape)
+
+    idw_diff_gdal = idw_gdal.copy(deep=True)
+    idw_diff_gdal.data = idw_gdal.data - idw_scipy_function.data
+
+    #idw_gdal.plot()
+    #idw_scipy_function.plot()
+    idw_diff_gdal.plot()
+    print(grid_xy)
+
+
+    if(verbose):  # print first iteration as does not change
+        print(f"The max between the PDAL writers.gdal and scipy implementation is {numpy.abs(idw_diff_gdal.data[0])[numpy.isnan(idw_diff_gdal.data[0])==False].max().max()}")
+
+
 if __name__ == "__main__":
-    main_compare()
+    main_scipy_vs_gdal()
+    #main_compare()
