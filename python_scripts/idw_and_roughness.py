@@ -6,7 +6,7 @@ Created on Mon Sep 13 16:14:37 2021
 """
 
 #from numba import jit
-import dask
+#import dask
 import numpy
 import scipy.spatial  # import cKDTree as KDTree
 import pathlib
@@ -63,11 +63,13 @@ def combined_roughness_function_mewis(all_points: numpy.ndarray, gnd_points: num
     tree_gnd = scipy.spatial.KDTree(xy_in_gnd, leafsize=leafsize)  # build the tree
     tree_index_list_gnd = tree_gnd.query_ball_point(xy_out, r=search_radius, eps=eps)  # , eps=0.2)
     z_out_gnd = numpy.zeros(len(xy_out))
+    std_out = numpy.zeros(len(xy_out))
 
     for i, (near_indicies, point) in enumerate(zip(tree_index_list_gnd, xy_out)):
 
         if len(near_indicies) == 0:  # Set NaN if no values in search region
             z_out_gnd[i] = numpy.nan
+            std_out[i] = numpy.nan
         else:
             distance_vectors = point - tree_gnd.data[near_indicies]
             smoothed_distances = numpy.sqrt(((distance_vectors**2).sum(axis=1)+smoothing**2))
@@ -76,7 +78,7 @@ def combined_roughness_function_mewis(all_points: numpy.ndarray, gnd_points: num
             else:
                 z_out_gnd[i] = (z_in_gnd[near_indicies] / (smoothed_distances**power)).sum(axis=0) \
                     / (1 / (smoothed_distances**power)).sum(axis=0)
-
+            std_out[i] = z_in_gnd[near_indicies].std()
     ground_elevations = z_out_gnd
 
     xy_in_all = numpy.empty((len(all_points), 2))
@@ -90,13 +92,17 @@ def combined_roughness_function_mewis(all_points: numpy.ndarray, gnd_points: num
 
     for i, near_indicies in enumerate(tree_index_list_all):
 
-        # count number of points in each height
-        near_indicies = numpy.array(near_indicies)
-        near_heights = z_in_all[near_indicies]
-        count_below_height = numpy.array([len(near_indicies[near_heights < threshold_elevation])
-                                          for threshold_elevation in voxel_heights + ground_elevations[i]])
-        z_out_all[i] = numpy.log(count_below_height[1:] / count_below_height[:-1]) \
-            / (voxel_heights[1:] - voxel_heights[:-1])
+        if len(near_indicies) == 0:  # Set NaN if no values in search region
+            z_out_gnd[i] = numpy.nan
+        else:
+
+            # count number of points in each height
+            near_indicies = numpy.array(near_indicies)
+            near_heights = z_in_all[near_indicies]
+            count_below_height = numpy.array([len(near_indicies[near_heights < threshold_elevation])
+                                              for threshold_elevation in voxel_heights + ground_elevations[i]])
+            z_out_all[i] = numpy.log(count_below_height[1:] / count_below_height[:-1]) \
+                / (voxel_heights[1:] - voxel_heights[:-1])
 
     return z_out_gnd, z_out_all
 
@@ -117,17 +123,19 @@ def roughness_function_mewis(xy_in: numpy.ndarray, z_in: numpy.ndarray, xy_out: 
     ground_voxel_height = voxel_heights[1] - voxel_heights[0]
 
     for i, near_indicies in enumerate(tree_index_list):
-
-        # count number of points in each height
-        near_indicies = numpy.array(near_indicies)
-        near_heights = z_in[near_indicies]
-        ground_voxel_heights = voxel_heights + ground_elevations[i]
-        '''if ground_std[i] > 10 * ground_voxel_height:
-            ground_voxel_heights[0] = ground_elevations[i] - ground_std[i] / 2'''
-        count_below_height = numpy.array([len(near_indicies[near_heights < threshold_elevation])
-                                          for threshold_elevation in ground_voxel_heights])
-        r_out[i] = numpy.log(count_below_height[1:] / count_below_height[:-1]) \
-            / (voxel_heights[1:] - voxel_heights[:-1])
+        if len(near_indicies) == 0:
+            r_out[i] = numpy.nan
+        else:
+            # count number of points in each height
+            near_indicies = numpy.array(near_indicies)
+            near_heights = z_in[near_indicies]
+            ground_voxel_heights = voxel_heights + ground_elevations[i]
+            '''if ground_std[i] > 10 * ground_voxel_height:
+                ground_voxel_heights[0] = ground_elevations[i] - ground_std[i] / 2'''
+            count_below_height = numpy.array([len(near_indicies[near_heights < threshold_elevation])
+                                              for threshold_elevation in ground_voxel_heights])
+            r_out[i] = numpy.log(count_below_height[1:] / count_below_height[:-1]) \
+                / (voxel_heights[1:] - voxel_heights[:-1])
 
     return r_out
 
@@ -182,7 +190,7 @@ def mewis_n_function(veg_density: xarray.DataArray, depth: xarray.DataArray, vox
             * (voxel_total_heights[i + 1] - voxel_total_heights[i])
         n_coefficient.data[(depth.data > voxel_total_heights[i]) & (depth.data < voxel_total_heights[i + 1])] += 4 * drag_coefficient \
             * veg_density.data[i, (depth.data > voxel_total_heights[i]) & (depth.data < voxel_total_heights[i + 1])] \
-                * (depth.data[(depth.data > voxel_total_heights[i]) & (depth.data < voxel_total_heights[i + 1])] - voxel_total_heights[i])
+            * (depth.data[(depth.data > voxel_total_heights[i]) & (depth.data < voxel_total_heights[i + 1])] - voxel_total_heights[i])
 
     # Convert to Manning's n
     n_coefficient.data = numpy.sqrt(n_coefficient.data * numpy.cbrt(depth.data) / (8 * 9.8))
@@ -205,14 +213,16 @@ def roughness_function_graham(xy_in: numpy.ndarray, z_in: numpy.ndarray, xy_out:
     z_out = numpy.empty((len(xy_out), len(voxel_heights) - 1))
 
     for i, (near_indicies, point) in enumerate(zip(tree_index_list, xy_out)):
-
-        # count number of points in each height
-        near_indicies = numpy.array(near_indicies)
-        near_heights = z_in[near_indicies]
-        count_below_height = numpy.array([len(near_indicies[near_heights < threshold_elevation])
-                                          for threshold_elevation in voxel_heights + ground_elevations[i]])
-        z_out[i] = (count_below_height[1:] - count_below_height[:-1]) / count_below_height[1:] \
-            * (voxel_heights[1:] - voxel_heights[:-1])
+        if len(near_indicies) == 0:
+            z_out[i] = numpy.nan
+        else:
+            # count number of points in each height
+            near_indicies = numpy.array(near_indicies)
+            near_heights = z_in[near_indicies]
+            count_below_height = numpy.array([len(near_indicies[near_heights < threshold_elevation])
+                                              for threshold_elevation in voxel_heights + ground_elevations[i]])
+            z_out[i] = (count_below_height[1:] - count_below_height[:-1]) / count_below_height[1:] \
+                * (voxel_heights[1:] - voxel_heights[:-1])
 
     return z_out
 
@@ -248,7 +258,7 @@ def main_compare():
     # parameters
     h_crs = 2193
     v_crs = 7839
-    res = 10
+    res = 4.5
     leafsize = 10
     eps = 0  # approximate nearest, dist <= (1 + eps) * true nearest
     power = 2
@@ -292,6 +302,12 @@ def main_compare():
         print(f"IDW scipy function takes {idw_time}")
     dem.data[0] = z_out
 
+    # The standard deviation of ground values
+    z_std = dem.copy(deep=True)
+    z_std.name = 'z std'
+    z_std.data[0] = z_std_flat.reshape(grid_x.shape)
+    
+
     # Create roughness xarray
     xy_in = numpy.empty((len(all_points), 2))
     xy_in[:, 0] = all_points['X']
@@ -316,8 +332,8 @@ def main_compare():
     roughness_gs = veg_density.copy(deep=True)
 
     # Examine why there are differences in the gnd height and all points
-    '''z_gnd, z_all = combined_roughness_function_mewis(all_points, gnd_points, grid_xy, voxel_heights=voxel_total_heights,
-                                                     leafsize=leafsize, search_radius=radius, power=power, eps=eps)'''
+    z_gnd, z_all = combined_roughness_function_mewis(all_points, gnd_points, grid_xy, voxel_heights=voxel_total_heights,
+                                                     leafsize=leafsize, search_radius=radius, power=power, eps=eps)
 
     # Python roughness - function Mewis - veg_density
     start_time = time.time()
@@ -331,7 +347,32 @@ def main_compare():
         print(f"Roughness function mewis takes {rough_time}")
     veg_density.data = r_out
 
-    # Python roughness - function Mewis
+    if(verbose):
+        print("Plot results")
+
+    fig, ax = matplotlib.pyplot.subplots()
+    dem.plot()
+    ax.set_title('Plot: DEM')
+    fig, ax = matplotlib.pyplot.subplots()
+    z_std.plot(vmin=0.01, norm=matplotlib.colors.LogNorm())
+    ax.set_title('Plot: Z Gnd STD')
+
+    vmin = numpy.nanmin(veg_density.data)
+    vmax = numpy.nanmax(veg_density.data)
+    '''for i in range(len(dim_z)):
+        fig, ax = matplotlib.pyplot.subplots()
+        veg_density.isel(z=i).plot(vmin=vmin, vmax=vmax)
+        ax.set_title(f"Plot: vegetation density bin {voxel_total_heights[i]}-{voxel_total_heights[i+1]}m")'''
+
+    vmin = max(vmin, 0.01)
+    vmax = 4
+    for i in range(len(dim_z)):
+        fig, ax = matplotlib.pyplot.subplots()
+        veg_density.isel(z=i).plot(vmin=vmin, vmax=vmax, norm=matplotlib.colors.LogNorm())
+        ax.set_title(f"Log plot: vegetation density bin {voxel_total_heights[i]}-{voxel_total_heights[i+1]}m")
+
+    '''
+    # Python roughness - function Greame's coefficient
     start_time = time.time()
     rough_flat = roughness_function_graham(xy_in, z_in, grid_xy, ground_elevations=z_out_flat,
                                            voxel_heights=voxel_total_heights, leafsize=leafsize,
@@ -343,27 +384,8 @@ def main_compare():
         print(f"Roughness function graham takes {rough_time}")
     roughness_gs.data = r_out
 
-    if(verbose):
-        print("Plot results")
-    vmin = veg_density.data.min()
-    vmax = veg_density.data.max()
-    for i in range(len(dim_z)):
-        fig, ax = matplotlib.pyplot.subplots()
-        veg_density.isel(z=i).plot(vmin=vmin, vmax=vmax)
-        ax.set_title(f"Plot: vegetation density bin {voxel_total_heights[i]}-{voxel_total_heights[i+1]}m")
-
-    fig, ax = matplotlib.pyplot.subplots()
-    dem.plot()
-    ax.set_title('Plot: DEM')
-
-    vmin = max(vmin, 0.01)
-    for i in range(len(dim_z)):
-        fig, ax = matplotlib.pyplot.subplots()
-        veg_density.isel(z=i).plot(vmin=vmin, vmax=vmax, norm=matplotlib.colors.LogNorm())
-        ax.set_title(f"Log plot: vegetation density bin {voxel_total_heights[i]}-{voxel_total_heights[i+1]}m")
-
-    vmin = roughness_gs.data.min()
-    vmax = roughness_gs.data.max()
+    vmin = numpy.nanmin(roughness_gs.data)
+    vmax = numpy.nanmax(roughness_gs.data)
     for i in range(len(dim_z)):
         fig, ax = matplotlib.pyplot.subplots()
         roughness_gs.isel(z=i).plot(vmin=vmin, vmax=vmax)
@@ -373,7 +395,7 @@ def main_compare():
     for i in range(len(dim_z)):
         fig, ax = matplotlib.pyplot.subplots()
         roughness_gs.isel(z=i).plot(vmin=vmin, vmax=vmax, norm=matplotlib.colors.LogNorm())
-        ax.set_title(f"Log plot: Graeme's coefficient bin {voxel_total_heights[i]}-{voxel_total_heights[i+1]}m")
+        ax.set_title(f"Log plot: Graeme's coefficient bin {voxel_total_heights[i]}-{voxel_total_heights[i+1]}m")'''
 
     return dem, veg_density
 
@@ -382,7 +404,7 @@ def main_manual_roughness(dem: xarray.DataArray):
     # load in The zo and manning's n files manaully generated by Graeme
     base_path = pathlib.Path(r'C:\Users\pearsonra\Documents\data\roughness\Waikanae_roughness')
     zo_file = base_path / r'Zo.asc'
-    n_file_2cm_min_v2 = base_path / r'Waikanae_n_values.asc'
+    n_file_20cm_min = base_path / r'Waikanae_n_values.asc'
 
     zo = numpy.loadtxt(zo_file, skiprows=6)
     with open(zo_file) as f:
@@ -393,7 +415,7 @@ def main_manual_roughness(dem: xarray.DataArray):
         res = float(f.readline().split()[1])
         no_data = float(f.readline().split()[1])
     dim_x = numpy.arange(x_min, x_min + n_cols * res, res)
-    dim_y = numpy.arange(y_min, y_min + n_rows * res, res)
+    dim_y = numpy.arange(y_min + n_rows * res, y_min, -res)
 
     dim_x_mask = (dim_x > float(dem.x.min())) & (dim_x < float(dem.x.max()))
     dim_y_mask = (dim_y > float(dem.y.min())) & (dim_y < float(dem.y.max()))
@@ -409,11 +431,11 @@ def main_manual_roughness(dem: xarray.DataArray):
 
     fig, ax = matplotlib.pyplot.subplots()
     zo_array.plot()
-    ax.set_title("Plot: Zo as manually generated by Graeme")
+    ax.set_title("Zo as manually generated by Graeme")
 
-    n_2cm_min_v2 = numpy.loadtxt(n_file_2cm_min_v2, skiprows=6)
+    n_20cm_min = numpy.loadtxt(n_file_20cm_min, skiprows=6)
 
-    with open(n_file_2cm_min_v2) as f:
+    with open(n_file_20cm_min) as f:
         n_cols = int(''.join(filter(str.isdigit, f.readline())))
         n_rows = int(''.join(filter(str.isdigit, f.readline())))
         x_min = float(f.readline().split()[1])
@@ -426,7 +448,7 @@ def main_manual_roughness(dem: xarray.DataArray):
     dim_x_mask = (dim_x > float(dem.x.min())) & (dim_x < float(dem.x.max()))
     dim_y_mask = (dim_y > float(dem.y.min())) & (dim_y < float(dem.y.max()))
 
-    n_clipped = n_2cm_min_v2[dim_y_mask, :]
+    n_clipped = n_20cm_min[dim_y_mask, :]
     n_clipped = n_clipped[:, dim_x_mask]
 
     n_array = xarray.DataArray(n_clipped, coords={'y': dim_y[dim_y_mask], 'x': dim_x[dim_x_mask]}, dims=['y', 'x'],
@@ -438,7 +460,7 @@ def main_manual_roughness(dem: xarray.DataArray):
 
     fig, ax = matplotlib.pyplot.subplots()
     n_array.plot(norm=matplotlib.colors.LogNorm())
-    ax.set_title("Plot: Manning's n calculated from Graeme's manually generated Zo")
+    ax.set_title("Manning's n from Graeme's manually generated Zo")
 
 
 def main_calculate_mannings_n(veg_density: xarray.DataArray):
@@ -511,8 +533,9 @@ def main_calculate_mannings_n(veg_density: xarray.DataArray):
     depth_min.plot(vmin=0.1, vmax=1)
     ax.set_title("Plot: Depth after 20cm added as Graham did")
 
-    vmin = max(mannings_n_mewis.data.min(), 0.01)
-    vmax = mannings_n_mewis.data.max()
+    vmin = max(numpy.nanmin(mannings_n_mewis.data), 0.02)
+    vmax = numpy.nanmax(mannings_n_mewis.data)
+    vmax = 0.2
     fig, ax = matplotlib.pyplot.subplots()
     mannings_n_mewis.plot(vmin=vmin, vmax=vmax, norm=matplotlib.colors.LogNorm())
     ax.set_title("Plot: Manning's n calculated from the Mewis equations")
