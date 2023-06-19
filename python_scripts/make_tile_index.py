@@ -49,16 +49,19 @@ def main(las_path: str, crs: int):
     index_name = f"{las_path.stem}_TileIndex"
     
     ## Run the shell command 
+    print("Generating the TileIndex file with PDAL.")
     os.system(f"find {str(las_path)} -iname '*.laz' | pdal tindex  create --tindex {str(las_path/index_name)} --lyr_name {index_name} "
               f"--stdin --t_srs EPSG:{crs} --filters.hexbin.edge_size=10 --filters.hexbin.threshold=1")
 
     
     ## Open and add a name column to the index
+    print("Adding a 'name' column to the TileIndex.")
     tile_index = geopandas.read_file(las_path / index_name)
     tile_index['name'] = tile_index.apply(lambda row: pathlib.Path(row['location']).name, axis=1)
     tile_index.to_file(las_path / index_name / f"{index_name}.shp")
     
     ## Zip the index
+    print("Zipping the TileIndex.")
     shutil.make_archive(index_name, 'zip', las_path / index_name)
     
     
