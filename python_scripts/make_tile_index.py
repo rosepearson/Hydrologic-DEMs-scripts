@@ -59,7 +59,7 @@ def main(las_path: str, crs: int):
     tile_index.to_file(las_path / index_name / f"{index_name}.shp")
     
     ## Zip the index
-    shutil.make_archive(index_name, 'zip', las_path)
+    shutil.make_archive(index_name, 'zip', las_path / index_name)
     
     
     print("Finished!")
