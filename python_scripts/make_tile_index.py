@@ -62,7 +62,7 @@ def main(las_path: str, crs: int):
     
     ## Zip the index
     print("Zipping the TileIndex.")
-    shutil.make_archive(index_name, 'zip', las_path / index_name)
+    shutil.make_archive(las_path / index_name, 'zip', las_path / index_name)
     
     
     print("Finished!")
