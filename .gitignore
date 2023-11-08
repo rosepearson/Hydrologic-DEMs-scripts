@@ -6,6 +6,8 @@ __pycache__/
 # C extensions
 *.so
 
+# OSM downloads
+cache/ 
 # ipython notebooks caches
 .ipynb_checkpoints
 
